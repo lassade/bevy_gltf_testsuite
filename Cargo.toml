@@ -1,0 +1,12 @@
+[package]
+name = "bevy_gltf_testsuite"
+version = "0.1.0"
+authors = ["Felipe Jorge <felipe.jorge.pereira@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bevy = { git = "https://github.com/lassade/bevy.git", branch = "dev" }
+serde = { version = "1.0.117", features = ["derive"] }
+serde_json = "1.0.59"
