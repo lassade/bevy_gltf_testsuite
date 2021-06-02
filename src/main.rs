@@ -15,12 +15,13 @@ struct Model {
 
 struct ModelIndex(Vec<Model>);
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
 pub enum State {
     NotLoaded,
     Loading,
     Loaded,
     Failed,
+    Timeout,
 }
 
 impl From<LoadState> for State {
@@ -34,11 +35,10 @@ impl From<LoadState> for State {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Default, Debug)]
 struct SuiteState {
-    #[serde(skip)]
     handle: Handle<Gltf>,
+    timer: f32,
     states: Vec<State>,
 }
 
@@ -81,17 +81,40 @@ fn main() {
         .run();
 }
 
-fn check(ok: bool) -> &'static str {
-    if ok {
-        ":heavy_check_mark:"
-    } else {
-        ":x:"
+// fn check(ok: bool) -> &'static str {
+//     if ok {
+//         ":heavy_check_mark:"
+//     } else {
+//         ":x:"
+//     }
+// }
+
+fn split_camel_case(name: &str) -> String {
+    let mut u0 = false;
+    let mut buffer = String::with_capacity(name.len());
+    for (i, ch) in name.chars().enumerate() {
+        let u1 = ch.is_uppercase();
+        if i != 0 && !u0 && u0 != u1 {
+            buffer.push(' ');
+        }
+        buffer.push(ch);
+        u0 = u1;
+    }
+    buffer
+}
+
+fn state_to_emoji(state: State) -> &'static str {
+    match state {
+        State::Loaded => ":heavy_check_mark:",
+        State::Timeout => ":hourglass:",
+        _ => ":x:",
     }
 }
 
 fn test_suite(
     mut suite_state: ResMut<SuiteState>,
     mut exit: EventWriter<AppExit>,
+    time: Res<Time>,
     model_index: Res<ModelIndex>,
     asset_server: Res<AssetServer>,
 ) {
@@ -99,12 +122,14 @@ fn test_suite(
     let suite_state = &mut *suite_state;
     let states = &mut suite_state.states;
     let handle = &mut suite_state.handle;
+    let timer = &mut suite_state.timer;
 
     let mut done = false;
+    let mut fail = false;
 
     let index = states.len();
     match states.last_mut() {
-        Some(State::Failed) | Some(State::Loaded) | None => {
+        Some(State::Timeout) | Some(State::Failed) | Some(State::Loaded) | None => {
             // Load next if any
             if index < model_index.0.len() {
                 let name = &model_index.0[index].name;
@@ -114,6 +139,7 @@ fn test_suite(
                 // Load
                 LOAD_FAILED_FLAG.store(false, Ordering::Relaxed);
                 *handle = asset_server.load(path.as_str());
+                *timer = 30.0;
 
                 states.push(State::Loading);
             } else {
@@ -121,11 +147,16 @@ fn test_suite(
             }
         }
         Some(state) => {
-            if LOAD_FAILED_FLAG.load(Ordering::Relaxed) {
+            *timer -= time.delta_seconds();
+            if *timer < 0.0 {
+                *state = State::Timeout;
+                fail = true; // Failed with timeout
+                error!("`{}` load timeout", model_index.0[index - 1].name,);
+            } else if LOAD_FAILED_FLAG.load(Ordering::Relaxed) {
                 *state = State::Failed;
-                done = true; // Failed with panic
+                fail = true; // Failed with panic
                 error!(
-                    "{} failed to load with panic, please restart this test suite to continue",
+                    "`{}` failed to load with panic",
                     model_index.0[index - 1].name,
                 );
             } else {
@@ -134,7 +165,7 @@ fn test_suite(
         }
     }
 
-    if done {
+    if done | fail {
         info!("done, writing result at `{}`", OUTPUT_PATH);
         serde_json::to_writer_pretty(File::create(OUTPUT_PATH).unwrap(), states).unwrap();
 
@@ -145,14 +176,18 @@ fn test_suite(
             let model = &model_index.0[i];
             writeln!(
                 &mut file,
-                "|[{}]({})|![]({}/{})|{}| | |",
-                model.name,
+                "|[{}](assets/gltf_samples/2.0/{})|![](assets/gltf_samples/2.0/{}/{})|{}| | |",
+                split_camel_case(&model.name),
                 model.name,
                 model.name,
                 model.screenshot,
-                check(*state == State::Loaded)
+                state_to_emoji(*state)
             )
             .unwrap();
+        }
+
+        if fail {
+            panic!("test suite failed, please re-run to continue where left off")
         }
 
         exit.send(AppExit);
