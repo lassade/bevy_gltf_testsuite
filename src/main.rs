@@ -176,7 +176,7 @@ fn test_suite(
             let model = &model_index.0[i];
             writeln!(
                 &mut file,
-                "|[{}](assets/gltf_samples/2.0/{})|![](assets/gltf_samples/2.0/{}/{})|{}| | |",
+                "|[{}](https://github.com/KhronosGroup/glTF-Sample-Models/blob/master/2.0/{})|![](https://github.com/KhronosGroup/glTF-Sample-Models/blob/master/2.0/{}/{})|{}| | |",
                 split_camel_case(&model.name),
                 model.name,
                 model.name,
