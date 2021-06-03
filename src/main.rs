@@ -39,6 +39,7 @@ impl From<LoadState> for State {
 struct SuiteState {
     handle: Handle<Gltf>,
     timer: f32,
+    counter: usize,
     states: Vec<State>,
 }
 
@@ -46,6 +47,7 @@ static LOAD_FAILED_FLAG: AtomicBool = AtomicBool::new(false);
 
 const OUTPUT_PATH: &'static str = "output.json";
 const README_PATH: &'static str = "temp.md";
+const KNOWN_TO_FAIL: &'static [&'static str] = &["SheenCloth", "SimpleSparseAccessor"];
 
 fn main() {
     //let panic_handle = std::panic::take_hook();
@@ -123,6 +125,7 @@ fn test_suite(
     let states = &mut suite_state.states;
     let handle = &mut suite_state.handle;
     let timer = &mut suite_state.timer;
+    let counter = &mut suite_state.counter;
 
     let mut done = false;
     let mut fail = false;
@@ -133,15 +136,28 @@ fn test_suite(
             // Load next if any
             if index < model_index.0.len() {
                 let name = &model_index.0[index].name;
-                let path = format!("gltf_samples/2.0/{}/glTF/{}.gltf", name, name);
-                info!("loading gltf at `{}`", path,);
 
-                // Load
-                LOAD_FAILED_FLAG.store(false, Ordering::Relaxed);
-                *handle = asset_server.load(path.as_str());
-                *timer = 30.0;
+                if KNOWN_TO_FAIL.contains(&name.as_str()) {
+                    states.push(State::Failed);
+                    error!("skipping known to fail sample `{}`", name);
+                } else {
+                    let path = format!("gltf_samples/2.0/{}/glTF/{}.gltf", name, name);
+                    info!("loading gltf at `{}`", path,);
 
-                states.push(State::Loading);
+                    // Load
+                    LOAD_FAILED_FLAG.store(false, Ordering::Relaxed);
+                    *handle = asset_server.load(path.as_str());
+                    *timer = 30.0;
+
+                    states.push(State::Loading);
+                }
+
+                *counter += 1;
+                if *counter >= 3 {
+                    // Save progress from time to time
+                    save(states, &*model_index);
+                    *counter = 0;
+                }
             } else {
                 done = true;
             }
@@ -167,14 +183,25 @@ fn test_suite(
 
     if done | fail {
         info!("done, writing result at `{}`", OUTPUT_PATH);
-        serde_json::to_writer_pretty(File::create(OUTPUT_PATH).unwrap(), states).unwrap();
+        save(states, &*model_index);
 
-        let mut file = File::create(README_PATH).unwrap();
-        writeln!(&mut file, "|Model|Screenshot|Load|Spawn|Glitch|").unwrap();
-        writeln!(&mut file, "|-----|----------|----|-----|------|").unwrap();
-        for (i, state) in states.iter().enumerate() {
-            let model = &model_index.0[i];
-            writeln!(
+        if fail {
+            panic!("test suite failed, please re-run to continue where left off")
+        }
+
+        exit.send(AppExit);
+    }
+}
+
+fn save(states: &Vec<State>, model_index: &ModelIndex) {
+    serde_json::to_writer_pretty(File::create(OUTPUT_PATH).unwrap(), states).unwrap();
+
+    let mut file = File::create(README_PATH).unwrap();
+    writeln!(&mut file, "|Model|Screenshot|Load|Spawn|Glitch|").unwrap();
+    writeln!(&mut file, "|-----|----------|----|-----|------|").unwrap();
+    for (i, state) in states.iter().enumerate() {
+        let model = &model_index.0[i];
+        writeln!(
                 &mut file,
                 "|[{}](https://github.com/KhronosGroup/glTF-Sample-Models/blob/master/2.0/{})|![](https://github.com/KhronosGroup/glTF-Sample-Models/blob/master/2.0/{}/{})|{}| | |",
                 split_camel_case(&model.name),
@@ -184,12 +211,5 @@ fn test_suite(
                 state_to_emoji(*state)
             )
             .unwrap();
-        }
-
-        if fail {
-            panic!("test suite failed, please re-run to continue where left off")
-        }
-
-        exit.send(AppExit);
     }
 }
